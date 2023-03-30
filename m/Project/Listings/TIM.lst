@@ -1,0 +1,112 @@
+C51 COMPILER V9.60.0.0   TIM                                                               11/24/2022 15:43:12 PAGE 1   
+
+
+C51 COMPILER V9.60.0.0, COMPILATION OF MODULE TIM
+OBJECT MODULE PLACED IN .\Objects\TIM.obj
+COMPILER INVOKED BY: D:\Keil_v5\C51\BIN\C51.EXE ..\Hardware\TIM\TIM.c LARGE OPTIMIZE(8,SPEED) BROWSE INCDIR(..\User;..\H
+                    -ardware\SYSCLK;..\Hardware\GPIOConfig;..\Hardware\Delay;..\Hardware\usart;..\Hardware\I2C;..\Hardware\ADC;..\Hardware\PW
+                    -M;..\Hardware\EEPROM;..\Hardware\ADC11;..\Hardware\TIM) DEBUG OBJECTEXTEND PRINT(.\Listings\TIM.lst) TABS(2) OBJECT(.\Ob
+                    -jects\TIM.obj)
+
+line level    source
+
+   1          #include <TIM.h>
+   2          #include <gpioconfig.h>
+   3          #include <intrins.h>
+   4          #include <STC8.h>
+   5          #include <math.h>
+   6          #include <pwm.h>
+   7          #include "adc.h"
+   8          #include <usart2.h>
+   9          #include <stdio.h>
+  10          u16 voldata[100];
+  11          bit adc_flag=0;
+  12          //定时器配置
+  13          void Timer0Init(void)   //200微秒@12.000MHz
+  14          {
+  15   1        AUXR &= 0x7F;   //定时器时钟12T模式
+  16   1        TMOD &= 0xF0;   //设置定时器模式
+  17   1        TL0 = 0x38;   //设置定时初始值
+  18   1        TH0 = 0xFF;   //设置定时初始值
+  19   1        TF0 = 0;    //清除TF0标志
+  20   1        TR0 = 1;    //定时器0开始计时
+  21   1        ET0=1; //使能定时器中断 
+  22   1        EA = 1; 
+  23   1      }
+  24          
+  25          void TM0_Isr() interrupt 1 using 1 
+  26          { 
+  27   1        static count=0;
+  28   1        voldata[count]=ADC_Get();
+  29   1        count++;
+  30   1        if(count==100) //一个周期
+  31   1        {
+  32   2          count=0;
+  33   2          ET0=0; //禁止定时器中断 
+  34   2          adc_flag=1;   //一次采样完成标志
+  35   2        }  
+  36   1       TF0 = 0;//清中断标志 
+  37   1      }  
+  38          
+  39          
+  40          u16 RMS_count(u16 *vol,u16 sizet)
+  41          {
+  42   1        u16 RMS=0;
+  43   1        u32 sum=0;
+  44   1        u16 i;
+  45   1        //判断电压大小
+  46   1        for(i=0;i<sizet;i++)
+  47   1        {
+  48   2          if(vol[i]<=0x0800)  vol[i]=0x0800-vol[i];
+  49   2          else vol[i]-=0x0800;
+  50   2        }
+  51   1        for(i=0;i<sizet;i++)
+  52   1        {
+C51 COMPILER V9.60.0.0   TIM                                                               11/24/2022 15:43:12 PAGE 2   
+
+  53   2          sum+=pow(vol[i],2);
+  54   2        }
+  55   1        RMS=sqrt(sum/100);
+  56   1        return RMS;
+  57   1      }
+  58          
+  59          //1次电压有效值
+  60          u16 RMS_ONE(void)
+  61          {
+  62   1        u16 outRMS=0;
+  63   1        Timer0Init();
+  64   1        while(!adc_flag);
+  65   1        outRMS=RMS_count(voldata,100);
+  66   1        adc_flag=0;     //清除一次采样完成标志
+  67   1        return outRMS;
+  68   1      }
+  69          
+  70          //5次电压有效值求平均
+  71          u16 RMS_Average(void)
+  72          {
+  73   1        int i=0;
+  74   1        u16 sum=0;
+  75   1        for(i=0;i<5;i++)
+  76   1        {
+  77   2          Timer0Init();
+  78   2          while(!adc_flag);
+  79   2          sum+=RMS_count(voldata,100);
+  80   2          adc_flag=0;     //清除一次采样完成标志
+  81   2        }
+  82   1        return sum/5;
+  83   1      }
+  84          
+
+
+MODULE INFORMATION:   STATIC OVERLAYABLE
+   CODE SIZE        =    592    ----
+   CONSTANT SIZE    =   ----    ----
+   XDATA SIZE       =    202      17
+   PDATA SIZE       =   ----    ----
+   DATA SIZE        =   ----    ----
+   IDATA SIZE       =   ----    ----
+   BIT SIZE         =      1    ----
+END OF MODULE INFORMATION.
+
+
+C51 COMPILATION COMPLETE.  0 WARNING(S),  0 ERROR(S)

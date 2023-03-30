@@ -1,0 +1,1018 @@
+C51 COMPILER V9.60.0.0   MAIN                                                              11/24/2022 15:43:12 PAGE 1   
+
+
+C51 COMPILER V9.60.0.0, COMPILATION OF MODULE MAIN
+OBJECT MODULE PLACED IN .\Objects\main.obj
+COMPILER INVOKED BY: D:\Keil_v5\C51\BIN\C51.EXE ..\User\main.c LARGE OPTIMIZE(8,SPEED) BROWSE INCDIR(..\User;..\Hardware
+                    -\SYSCLK;..\Hardware\GPIOConfig;..\Hardware\Delay;..\Hardware\usart;..\Hardware\I2C;..\Hardware\ADC;..\Hardware\PWM;..\Ha
+                    -rdware\EEPROM;..\Hardware\ADC11;..\Hardware\TIM) DEBUG OBJECTEXTEND PRINT(.\Listings\main.lst) TABS(2) OBJECT(.\Objects\
+                    -main.obj)
+
+line level    source
+
+   1          /*****************************************************************
+   2          项目名称：智慧照明Lora2.0，污水处理厂区
+   3          补充：0x0000 当天规则
+   4                0x0200 下日规则
+   5                0x0400 实时控制亮度
+   6                0x0600 组号
+   7                0x0800 lora配置标志位
+   8          作者：张奕雯
+   9          修改日期：2022年10月10日
+  10          
+  11          *****************************************************************/
+  12          #include <STC8.H>
+  13          #include <stdio.h>
+  14          #include <intrins.h>
+  15          #include <sysclk.h>
+  16          #include <gpioconfig.h>
+  17          #include <Delay.h>
+  18          #include "usart2.h"
+  19          #include "ADC.h"
+  20          #include "I2C.h"
+  21          #include "pwm.h"
+  22          #include "eeprom.h"
+  23          #include "ADC11.h"
+  24          #include "TIM.h"
+  25          
+  26          void set_gain(void);
+  27          void real_control(u8 control_light,u8 ack);
+  28          void today_rule(u8 size_t,u8 * rule,u8 ack);
+  29          void tomorrow_rule(u8 size_t,u8 * rule,u8 ack);
+  30          
+  31          const u16 OPEN=0x005A;   //空载时放大21倍大致在0x000D左右，针对20w以上的灯具,但可能(暂定该值，对于不同功率
+             -的灯还需调整)
+  32          u8 request[5];                          //请求入网指令
+  33          u8 no_open[4]={0xB2,0x01,0x65,0x18};    //无法开灯故障
+  34          u8 right[4];                            //正常
+  35          u8 no_acheive[4]={0xB2,0x01,0x67,0x1A}; //未达到指定亮度  （未正常关灯）
+  36          u8 clk_reset[2]={0x00,0x00};            //规则更新时间
+  37          u8 cal_ok[4]={0xB2,0x01,0xFE,0xB1};     //完成时钟校准
+  38          u8 real_ok[5];                          //标志日志
+  39          u8 time_set[6];                         //时间校准
+  40          u8 clk_time[2]=0;
+  41          u8 current_rule[20];        //当天时间规则（每天24点更新后记录）
+  42          u8 next_rule[20];
+  43          u8 current_number;          //当天闹钟数（每天24点更新）
+  44          u8 current_time[2];         //当前时间  
+  45          u16 light;                  //亮度切换时记录亮度
+  46          u8 next_clk[2];
+  47          bit calibration_flag;       //时钟校准标志位
+  48          bit group_flag;             //组播标志位
+  49          bit day_clk;                //规则日志标志
+  50          bit real_flag;              //实时日志标志
+  51          bit first_b7;               //入网时间校准位
+C51 COMPILER V9.60.0.0   MAIN                                                              11/24/2022 15:43:12 PAGE 2   
+
+  52          bit B2_flag;                //收到B2标志位  
+  53          bit res_flag;               //组播规则标志位
+  54          bit request_flag;
+  55          
+  56          int main(void)
+  57          { 
+  58   1        
+  59   1        u8 i;
+  60   1        u8 TIME[2];
+  61   1        u16 addr;
+  62   1        u8 seed;    //入网时间种子
+  63   1        u16 adc;
+  64   1        u16 j;
+  65   1        u8 power;   //拨码开关
+  66   1        u16 powerdata=0;//电压有效值
+  67   1        CRC_OK=0;
+  68   1        sysclk_init();
+  69   1        gpioconfig();
+  70   1        PWM_init(); 
+  71   1        ADC11_init(); 
+  72   1        Uart2_Init_115200();
+  73   1        IT0=1;      //使能INT0下降沿
+  74   1        EX0=1;      //使能INT0中断
+  75   1        EA = 1; 
+  76   1        addr=0; 
+  77   1        relay=1;                    //继电器闭合
+  78   1        request_flag=0;             //入网请求标志位
+  79   1        calibration_flag=0;         //时钟校准标志位
+  80   1        group_flag=0;
+  81   1        INT_flag=0;                 //RTC 中断标志位
+  82   1        first_b7=1;                 //入网校准标志位
+  83   1        res_flag=1;                 //Lora模块复位标志
+  84   1        B2_flag=0;
+  85   1        crl=1;                      //2倍放大（初始化电流小倍数放大）
+  86   1        adc_flag=0;                 //AD周期采集结束标志
+  87   1        light=0x64;
+  88   1        day_clk=0;
+  89   1        real_flag=0;
+  90   1        CRC_OK=0;
+  91   1        power=((P0&0x10)>>4)*8+((P0&0x20)>>5)*4+((P0&0x40)>>6)*2+((P0&0x80)>>7);//4位拨码（功能待定）
+  92   1        rest=1;
+  93   1        //清空当前规则数组
+  94   1        for(j=0;j<20;j++)
+  95   1        {
+  96   2          current_rule[j]=0xff;
+  97   2        }
+  98   1        seed=ADC11_Get();           //获取随机种子
+  99   1        if(seed<0x64)
+ 100   1          seed+=0x64;
+ 101   1        ADC_init(); 
+ 102   1        set_gain(); //选择放大倍数（2倍或21倍）
+ 103   1        Delay1ms(seed*2); //随机延时
+ 104   1        RTC_init();
+ 105   1        //IIC通信测试
+ 106   1      //  ReadNbyte(0x03,current_time,2); 
+ 107   1      //  current_time[0]&=0x7f;//分
+ 108   1      //  current_time[1]&=0x3f;//时  
+ 109   1      //  Uart2SendStr(current_time,sizeof(current_time));
+ 110   1        powerdata=RMS_Average();
+ 111   1        //printf("%4x",powerdata);
+ 112   1        //判断放大倍数
+ 113   1        if(crl)//放大2倍
+C51 COMPILER V9.60.0.0   MAIN                                                              11/24/2022 15:43:12 PAGE 3   
+
+ 114   1        {
+ 115   2          LED2=0;
+ 116   2          powerdata/=2;
+ 117   2        }
+ 118   1        else if(!crl)
+ 119   1          powerdata/=21;
+ 120   1        //请求入网指令
+ 121   1        request[0]=0xBA;
+ 122   1        request[1]=0x02;
+ 123   1        request[2]=powerdata>>8;
+ 124   1        request[3]=(u8)powerdata;
+ 125   1        request[4]=request[0]+request[1]+request[2]+request[3];
+ 126   1        if(IapRead(0x0800)==0xff)
+ 127   1        {
+ 128   2          LoRa_Config();      //Lora模块配置  
+ 129   2          LED3=1;
+ 130   2          IapWrite(0x0800,0x01);
+ 131   2        }
+ 132   1        WDT_CONTR=0x27;                  //启动看门狗，8s
+ 133   1        while(1) 
+ 134   1          {   
+ 135   2            WDT_CONTR|=0x10;          //清看门狗，否则系统复位
+ 136   2            //成功入网
+ 137   2            if(request_flag)
+ 138   2            {     
+ 139   3              LED2=1;         //LED2--规则更新指示灯
+ 140   3              LED1=1;         //LED1--规则时间点切换指示灯
+ 141   3              LED0=~LED0;     //入网运行指示灯
+ 142   3              Delay500ms();
+ 143   3              ReadNbyte(0x03,current_time,2); //查看当前时间
+ 144   3              current_time[0]&=0x7f;//分
+ 145   3              current_time[1]&=0x3f;//时
+ 146   3              //隔2min复位Lora模块
+ 147   3              if(current_time[0]%2==0&&res_flag)
+ 148   3              {       
+ 149   4                  //复位模块
+ 150   4                  rest=0;
+ 151   4                  Delay30us();
+ 152   4                  rest=1;
+ 153   4                  res_flag=0;         
+ 154   4              } 
+ 155   3              if(current_time[0]%2!=0&&!res_flag)
+ 156   3              {
+ 157   4                res_flag=1;
+ 158   4              }                             
+ 159   3              //上发命令
+ 160   3              if(CRC_OK)//求和校验正确
+ 161   3              {   
+ 162   4                  CRC_OK=0;         //清校验正确标志位          
+ 163   4                  if(Usart2_Rx_Buf[0]==0xB2)            //请求设备状态上传
+ 164   4                  {                     
+ 165   5                    u8 c=0; 
+ 166   5                    B2_flag=1;      //收到B2标志位        
+ 167   5                    ReadNbyte(0x03,current_time,2); 
+ 168   5                    current_time[0]&=0x7f;//分
+ 169   5                    current_time[1]&=0x3f;//时
+ 170   5                    WDT_CONTR|=0x10;          //清看门狗，否则系统复位
+ 171   5                    //组播规则标志
+ 172   5                    if(group_flag)
+ 173   5                    {
+ 174   6                      real_ok[0]=0xB2;
+ 175   6                      real_ok[1]=0x02;
+C51 COMPILER V9.60.0.0   MAIN                                                              11/24/2022 15:43:12 PAGE 4   
+
+ 176   6                      real_ok[2]=0xFB;
+ 177   6                      real_ok[3]=light;
+ 178   6                      real_ok[4]=real_ok[0]+real_ok[1]+real_ok[2]+real_ok[3];
+ 179   6                      Uart2SendStr(real_ok,sizeof(real_ok));
+ 180   6                      group_flag=0;
+ 181   6                    }
+ 182   5                    //时钟校准标志
+ 183   5                    else if(calibration_flag)
+ 184   5                    {             
+ 185   6                      Uart2SendStr(cal_ok,sizeof(cal_ok));
+ 186   6                      calibration_flag=0;
+ 187   6                    }
+ 188   5                    //规则日志标志
+ 189   5                    else if(day_clk)        
+ 190   5                    {
+ 191   6                      real_ok[0]=0xB2;
+ 192   6                      real_ok[1]=0x02;
+ 193   6                      real_ok[2]=0xFD;
+ 194   6                      real_ok[3]=light;
+ 195   6                      real_ok[4]=real_ok[0]+real_ok[1]+real_ok[2]+real_ok[3];
+ 196   6                      Uart2SendStr(real_ok,sizeof(real_ok));
+ 197   6                      day_clk=0;
+ 198   6                    }
+ 199   5                    //实时日志标志
+ 200   5                    else if(real_flag)        
+ 201   5                    {
+ 202   6                      real_ok[0]=0xB2;
+ 203   6                      real_ok[1]=0x02;
+ 204   6                      real_ok[2]=0xFC;
+ 205   6                      real_ok[3]=light;
+ 206   6                      real_ok[4]=real_ok[0]+real_ok[1]+real_ok[2]+real_ok[3];
+ 207   6                      Uart2SendStr(real_ok,sizeof(real_ok));
+ 208   6                      real_flag=0;
+ 209   6                    }
+ 210   5                    //当前正在执行规则模式
+ 211   5                    else if(IapRead(0x0400)==0xff)              
+ 212   5                    {
+ 213   6                      //有规则
+ 214   6                      if(current_rule[0]!=0xff)
+ 215   6                      {
+ 216   7                        right[0]=0xB2;
+ 217   7                        right[1]=0x01;
+ 218   7                        right[2]=light;
+ 219   7                        right[3]=right[0]+right[1]+right[2];
+ 220   7                        adc=RMS_Average();  //采集电压有效值
+ 221   7                        //大于最后一个闹钟时间时
+ 222   7                        if(current_time[1]>current_rule[1+3*(current_number-1)]||(current_time[1]==current_rule[1+3*(curr
+             -ent_number-1)]&&current_time[0]>current_rule[3*(current_number-1)]))
+ 223   7                        {                           
+ 224   8                          if(current_rule[2+3*(current_number-1)]>0)                  //如果规则亮度不为0
+ 225   8                          {
+ 226   9                            if(adc>OPEN)
+ 227   9                              Uart2SendStr(right,sizeof(right));
+ 228   9                            else
+ 229   9                              Uart2SendStr(no_open,sizeof(no_open));
+ 230   9                          }
+ 231   8                          else
+ 232   8                          {
+ 233   9                            if(adc<=OPEN)
+ 234   9                              Uart2SendStr(right,sizeof(right));
+ 235   9                            else
+ 236   9                              Uart2SendStr(no_acheive,sizeof(no_acheive));
+C51 COMPILER V9.60.0.0   MAIN                                                              11/24/2022 15:43:12 PAGE 5   
+
+ 237   9                          }
+ 238   8                        }                                                                                     
+ 239   7                        //大于第一个闹钟小于最后一个闹钟时间时
+ 240   7                        else if((current_time[1]>current_rule[1]||(current_time[1]==current_rule[1]&&current_time[0]>curr
+             -ent_rule[0]))&&(current_time[1]<current_rule[1+3*(current_number-1)]||(current_time[1]==current_rule[1+3*(current_number
+             --1)]&&current_time[0]<current_rule[3*(current_number-1)])))
+ 241   7                        {           
+ 242   8                          for(c=0;c<current_number-1;c++)
+ 243   8                          {
+ 244   9                            if((current_time[1]>current_rule[1+3*c]||(current_time[1]==current_rule[1+3*c]&&current_time[0]
+             ->current_rule[3*c]))&&(current_time[1]<current_rule[4+3*c]||(current_time[1]==current_rule[4+3*c]&&current_time[0]<curre
+             -nt_rule[3+3*c])))         //当前时间大于前一个闹钟时小于后一个闹钟时
+ 245   9                            {               
+ 246  10                              if(current_rule[2+3*c]>0x00&&current_rule[2+3*c]<=0x64)     //规则亮度不为0
+ 247  10                              {
+ 248  11                                if(adc>OPEN)
+ 249  11                                  Uart2SendStr(right,sizeof(right));
+ 250  11                                else
+ 251  11                                  Uart2SendStr(no_open,sizeof(no_open));
+ 252  11                              }
+ 253  10                              else if(current_rule[2+3*c]==0x00)                          //规则亮度为0
+ 254  10                              {
+ 255  11                                if(adc>OPEN)
+ 256  11                                  Uart2SendStr(no_acheive,sizeof(no_acheive));
+ 257  11                                else
+ 258  11                                  Uart2SendStr(right,sizeof(right));
+ 259  11                              }
+ 260  10                            }                               
+ 261   9                          }                                   
+ 262   8                        }
+ 263   7                      }
+ 264   6                      //没有规则
+ 265   6                      else 
+ 266   6                      {
+ 267   7                        right[0]=0xB2;
+ 268   7                        right[1]=0x01;
+ 269   7                        right[2]=0x64;
+ 270   7                        right[3]=right[0]+right[1]+right[2];
+ 271   7                        if(adc>OPEN)
+ 272   7                        {
+ 273   8                          Uart2SendStr(right,sizeof(right));
+ 274   8                        }
+ 275   7                        else
+ 276   7                          Uart2SendStr(no_open,sizeof(no_open));
+ 277   7                      }               
+ 278   6                    }
+ 279   5                    //当前正在执行实时模式
+ 280   5                    else if(IapRead(0x0400)!=0xff)
+ 281   5                    {
+ 282   6                      light=IapRead(0x0400);
+ 283   6                      right[0]=0xB2;
+ 284   6                      right[1]=0x01;
+ 285   6                      right[2]=light;
+ 286   6                      right[3]=right[0]+right[1]+right[2];
+ 287   6                      adc=RMS_Average();  //采集电压有效值
+ 288   6                      //printf("adc:%4x\r\n",adc);
+ 289   6                      if(light==0)
+ 290   6                      {
+ 291   7                        if(adc<=OPEN)
+ 292   7                          Uart2SendStr(right,sizeof(right));
+ 293   7                        else
+ 294   7                          Uart2SendStr(no_acheive,sizeof(no_acheive));
+C51 COMPILER V9.60.0.0   MAIN                                                              11/24/2022 15:43:12 PAGE 6   
+
+ 295   7                      }
+ 296   6                      else if(light>0x00&&light<=0x64)
+ 297   6                      {
+ 298   7                        if(adc<=OPEN)
+ 299   7                          Uart2SendStr(no_open,sizeof(no_open));
+ 300   7                        else
+ 301   7                          Uart2SendStr(right,sizeof(right));
+ 302   7                      }
+ 303   6                    }
+ 304   5                    //Usart2_Rx_Buf清零
+ 305   5                    for(j=0;j<Usart2_Rx_Buf[1]+3;j++)   
+ 306   5                    {
+ 307   6                      Usart2_Rx_Buf[j]=0;
+ 308   6                    }
+ 309   5                  }                 
+ 310   4                  else if(Usart2_Rx_Buf[0]==0xB3)           //开关灯
+ 311   4                  {
+ 312   5                    //实时开关灯命令，进入实时模式            
+ 313   5                    if((Usart2_Rx_Buf[2]>=0x00&&Usart2_Rx_Buf[2]<=0x64)||Usart2_Rx_Buf[2]==0xff)
+ 314   5                    {
+ 315   6                      real_control(Usart2_Rx_Buf[2],1);
+ 316   6                    }
+ 317   5                    else 
+ 318   5                      Uart2SendStr(NOACK,sizeof(NOACK));
+ 319   5                    //Usart2_Rx_Buf清零       
+ 320   5                    for(j=0;j<Usart2_Rx_Buf[1]+3;j++)   
+ 321   5                    {
+ 322   6                      Usart2_Rx_Buf[j]=0;
+ 323   6                    }
+ 324   5                    IE2 = 0x01;     //使能串口中断            
+ 325   5                  }
+ 326   4                  else if(Usart2_Rx_Buf[0]==0xB5)           //规则接收（分/时/亮度）下一天的规则
+ 327   4                  {
+ 328   5                    u8 rule[20];
+ 329   5                    for(j=0;i<Usart2_Rx_Buf[1];j++)
+ 330   5                    {
+ 331   6                      rule[j]=Usart2_Rx_Buf[2+j];
+ 332   6                    }
+ 333   5                    tomorrow_rule(Usart2_Rx_Buf[1],rule,1);
+ 334   5                    //Usart2_Rx_Buf清零       
+ 335   5                    for(j=0;j<Usart2_Rx_Buf[1]+3;j++)   
+ 336   5                    {
+ 337   6                      Usart2_Rx_Buf[j]=0;
+ 338   6                    }
+ 339   5                    IE2 = 0x01;     //使能串口中断
+ 340   5                  }
+ 341   4                  else if(Usart2_Rx_Buf[0]==0xB6)           //规则修改（修改当天规则）
+ 342   4                  {
+ 343   5                    u8 rule[20];
+ 344   5                    for(j=0;j<Usart2_Rx_Buf[1];j++)
+ 345   5                    {
+ 346   6                      rule[j]=Usart2_Rx_Buf[2+j];
+ 347   6                    }
+ 348   5                    today_rule(Usart2_Rx_Buf[1],rule,1);
+ 349   5                    //Usart2_Rx_Buf清零       
+ 350   5                    for(j=0;j<Usart2_Rx_Buf[1]+3;j++)   
+ 351   5                    {
+ 352   6                      Usart2_Rx_Buf[j]=0;
+ 353   6                    }
+ 354   5                    IE2 = 0x01;     //使能串口中断
+ 355   5                  }
+ 356   4                  else if(Usart2_Rx_Buf[0]==0xB7)           //时钟校准
+C51 COMPILER V9.60.0.0   MAIN                                                              11/24/2022 15:43:12 PAGE 7   
+
+ 357   4                  {
+ 358   5                    if(Usart2_Rx_Buf[1]==0x08)
+ 359   5                    {
+ 360   6                      //写入校准时间
+ 361   6                      for(i=0;i<6;i++)
+ 362   6                      {           
+ 363   7                        time_set[i]=Usart2_Rx_Buf[2+i];               
+ 364   7                      }
+ 365   6                      WriteNbyte(0x02, time_set, 7);
+ 366   6                      calibration_flag=1;           //校准标志位置1
+ 367   6                      LED3=0;
+ 368   6                      Delay500ms(); 
+ 369   6                      LED3=1;                 
+ 370   6                    }
+ 371   5                    else
+ 372   5                      Uart2SendStr(NOACK,sizeof(NOACK));              
+ 373   5                    //Usart2_Rx_Buf清零       
+ 374   5                    for(j=0;j<Usart2_Rx_Buf[1]+3;j++)   
+ 375   5                    {
+ 376   6                      Usart2_Rx_Buf[j]=0;
+ 377   6                    }
+ 378   5                    IE2 = 0x01;     //使能串口中断            
+ 379   5                  }                                         
+ 380   4                  else if(Usart2_Rx_Buf[0]==0xB8)           //分组命令
+ 381   4                  {
+ 382   5                    //记录组号              
+ 383   5                    IapErase(0x0600);//擦除组号
+ 384   5                    if(Usart2_Rx_Buf[2]!=0xff)
+ 385   5                      IapWrite(0x0600,Usart2_Rx_Buf[2]);//写入组号
+ 386   5                    Uart2SendStr(ACK,sizeof(ACK));
+ 387   5                    //Usart2_Rx_Buf清零       
+ 388   5                    for(j=0;j<Usart2_Rx_Buf[1]+3;j++)   
+ 389   5                    {
+ 390   6                      Usart2_Rx_Buf[j]=0;
+ 391   6                    }
+ 392   5                    IE2 = 0x01;     //使能串口中断  
+ 393   5                  }
+ 394   4                  else if(Usart2_Rx_Buf[0]==0xBB)           //组播实时控制命令
+ 395   4                  {
+ 396   5                    if(Usart2_Rx_Buf[2]==IapRead(0x0600))   //查看组号是否匹配    
+ 397   5                    {
+ 398   6                      if((Usart2_Rx_Buf[3]>=0x00&&Usart2_Rx_Buf[3]<=0x64)||Usart2_Rx_Buf[3]==0xff)
+ 399   6                      {
+ 400   7                        real_control(Usart2_Rx_Buf[3],0);
+ 401   7                      }
+ 402   6      //                else 
+ 403   6      //                  Uart2SendStr(NOACK,sizeof(NOACK));
+ 404   6                    }
+ 405   5                    //Usart2_Rx_Buf清零       
+ 406   5                    for(j=0;j<Usart2_Rx_Buf[1]+3;j++)   
+ 407   5                    {
+ 408   6                      Usart2_Rx_Buf[j]=0;
+ 409   6                    }
+ 410   5                    IE2 = 0x01;     //使能串口中断  
+ 411   5                  }             
+ 412   4                  else if(Usart2_Rx_Buf[0]==0xBD)           //组播次日规则命令
+ 413   4                  {
+ 414   5                    if(Usart2_Rx_Buf[2]==IapRead(0x0600))   //查看组号是否匹配    
+ 415   5                    {
+ 416   6                      u8 rule[20];
+ 417   6                      for(j=0;j<Usart2_Rx_Buf[1]-1;j++)//获取规则
+ 418   6                      {
+C51 COMPILER V9.60.0.0   MAIN                                                              11/24/2022 15:43:12 PAGE 8   
+
+ 419   7                        rule[j]=Usart2_Rx_Buf[3+j];
+ 420   7                      }
+ 421   6                      tomorrow_rule(Usart2_Rx_Buf[1]-1,rule,0);
+ 422   6                      group_flag=1;   //组播标志位
+ 423   6                      day_clk=0;
+ 424   6                    }
+ 425   5                    //Usart2_Rx_Buf清零       
+ 426   5                    for(j=0;j<Usart2_Rx_Buf[1]+3;j++)   
+ 427   5                    {
+ 428   6                      Usart2_Rx_Buf[j]=0;
+ 429   6                    }
+ 430   5                    IE2 = 0x01;     //使能串口中断
+ 431   5                  }
+ 432   4                  else if(Usart2_Rx_Buf[0]==0xBE)           //组播当日规则命令
+ 433   4                  {
+ 434   5                    if(Usart2_Rx_Buf[2]==IapRead(0x0600))   //查看组号是否匹配    
+ 435   5                    {
+ 436   6                      u8 rule[20];
+ 437   6                      for(j=0;j<Usart2_Rx_Buf[1]-1;j++)//获取规则
+ 438   6                      {
+ 439   7                        rule[j]=Usart2_Rx_Buf[3+j];
+ 440   7                      }
+ 441   6                      today_rule(Usart2_Rx_Buf[1]-1,rule,0);//不作应答，等下次轮询上报
+ 442   6                      group_flag=1;   //组播标志位
+ 443   6                      day_clk=0;
+ 444   6                    }
+ 445   5                    //Usart2_Rx_Buf清零       
+ 446   5                    for(j=0;j<Usart2_Rx_Buf[1]+3;j++)   
+ 447   5                    {
+ 448   6                      Usart2_Rx_Buf[j]=0;
+ 449   6                    }
+ 450   5                    IE2 = 0x01;     //使能串口中断
+ 451   5                  }
+ 452   4                  else
+ 453   4                  {
+ 454   5                    //Usart2_Rx_Buf清零       
+ 455   5                    for(j=0;j<Usart2_Rx_Buf[1]+3;j++)   
+ 456   5                    {
+ 457   6                      Usart2_Rx_Buf[j]=0;
+ 458   6                    }
+ 459   5                  }
+ 460   4              }
+ 461   3              //判断RTC定时中断
+ 462   3              if(INT_flag)
+ 463   3              {
+ 464   4                u8 clear_1=0x02;
+ 465   4                //判断是否是设定的闹钟 （查看当前时间）
+ 466   4                ReadNbyte(0x03,TIME,2);
+ 467   4                Delay100ms();
+ 468   4                TIME[0]&=0x7f;//分
+ 469   4                TIME[1]&=0x3f;//时
+ 470   4                INT_flag=0;
+ 471   4                Delay500ms();
+ 472   4                WriteNbyte(0x01,&clear_1,1);                //清除RTC定时中断标志                         
+ 473   4                //如果是24点的闹钟，则更新新一天的闹钟
+ 474   4                if(TIME[0]==0x00&&TIME[1]==0x00)
+ 475   4                {   
+ 476   5                  LED2=0; 
+ 477   5                  Delay500ms();           
+ 478   5                  //替换规则
+ 479   5                  IapErase(0x0000);                         //擦除上一天的规则  
+ 480   5                  for(addr=0;addr<20;addr++)          //写入当天规则分/时/亮度(当天的规则写在第一页）
+C51 COMPILER V9.60.0.0   MAIN                                                              11/24/2022 15:43:12 PAGE 9   
+
+ 481   5                  {             
+ 482   6                    next_rule[addr]=IapRead(0x0200+addr);
+ 483   6                  }           
+ 484   5                  for(addr=0;addr<20;addr++)          //写入当天规则分/时/亮度(当天的规则写在第一页）
+ 485   5                  {             
+ 486   6                    IapWrite(addr,next_rule[addr]);
+ 487   6                  }
+ 488   5                  for(addr=0;addr<20;addr++)    
+ 489   5                  {
+ 490   6                    current_rule[addr]=IapRead(addr);         //更新当前规则，分/时/亮度
+ 491   6                  }
+ 492   5                  addr=0;
+ 493   5                  while(current_rule[addr]!=0xff)
+ 494   5                  {
+ 495   6                    addr++;
+ 496   6                  } 
+ 497   5                  current_number=addr/3;                          //记录当前闹钟个数  
+ 498   5                  //Uart2Send(current_number);            
+ 499   5                  //当前为规则模式
+ 500   5                  if(IapRead(0x0400)==0xff)
+ 501   5                  {
+ 502   6                    day_clk=1;    //日志标志位
+ 503   6                    //有规则
+ 504   6                    if(current_rule[0]!=0xff)
+ 505   6                    {
+ 506   7                      //执行当天第一个闹钟（0点）
+ 507   7                      light=current_rule[2];
+ 508   7                      if(light==0) relay=0;
+ 509   7                      else
+ 510   7                      {       
+ 511   8                        PWM_set(light*0x0030);              
+ 512   8                        relay=1;
+ 513   8                      }
+ 514   7                      if(current_number>=2)
+ 515   7                      {
+ 516   8                        //设置当天第二个闹钟          
+ 517   8                      clk_time[0]=current_rule[3];
+ 518   8                      clk_time[1]=current_rule[4];          
+ 519   8                      WriteNbyte(0x09,clk_time,2);
+ 520   8                      //Uart2SendStr(clk_time,sizeof(clk_time));
+ 521   8                      }
+ 522   7                      else
+ 523   7                        WriteNbyte(0x09,clk_reset,2);
+ 524   7                    }
+ 525   6                    //没有规则
+ 526   6                    else if(current_rule[0]==0xff)
+ 527   6                    {
+ 528   7                      light=0x64;
+ 529   7                      PWM_set(0x12C0);              
+ 530   7                      relay=1;              
+ 531   7                    }             
+ 532   6                  } 
+ 533   5                  //当前为实时模式
+ 534   5                  else if(IapRead(0x0400)!=0xff)
+ 535   5                  {
+ 536   6                    light=IapRead(0x0400);
+ 537   6                    if(light==0x00) relay=0;
+ 538   6                    else
+ 539   6                    {
+ 540   7                      PWM_set(light*0x0030);
+ 541   7                      relay=1;
+ 542   7                    }   
+C51 COMPILER V9.60.0.0   MAIN                                                              11/24/2022 15:43:12 PAGE 10  
+
+ 543   6                  }         
+ 544   5                }
+ 545   4                //如果不是24点的闹钟
+ 546   4                else
+ 547   4                { 
+ 548   5                  day_clk=1;    //日志标志位
+ 549   5                  LED1=0;
+ 550   5                  Delay500ms(); 
+ 551   5                  for(j=1;j<current_number;j++)
+ 552   5                  {
+ 553   6                    if(TIME[0]==current_rule[3*j]&&TIME[1]==current_rule[1+3*j])
+ 554   6                    {
+ 555   7                      light=current_rule[2+3*j];
+ 556   7                      if(j==current_number-1)//最后一个时间段
+ 557   7                      {
+ 558   8                        if(light==0)    relay=0;
+ 559   8                        else
+ 560   8                        {
+ 561   9                          PWM_set(light*0x0030);                  
+ 562   9                          relay=1;
+ 563   9                        }
+ 564   8                        WriteNbyte(0x09,clk_reset,2);
+ 565   8                        Delay100ms();
+ 566   8                        //ReadNbyte(0x09,next_clk, 2);
+ 567   8                        //Uart2SendStr(next_clk,2);
+ 568   8                        WriteNbyte(0x01,&clear_1,1);
+ 569   8                      }
+ 570   7                      else
+ 571   7                      { 
+ 572   8                        if(light==0) 
+ 573   8                        {
+ 574   9                          relay=0;
+ 575   9                        }
+ 576   8                        else
+ 577   8                        {
+ 578   9                          PWM_set(light*0x0030);                  
+ 579   9                          relay=1;
+ 580   9                        }
+ 581   8                        //设置下一个闹钟  
+ 582   8                        clk_time[0]=current_rule[3+3*j];
+ 583   8                        clk_time[1]=current_rule[4+3*j];                            
+ 584   8                        WriteNbyte(0x09,clk_time,2);
+ 585   8                        //Uart2SendStr(clk_time,sizeof(clk_time));
+ 586   8                      }
+ 587   7                    }
+ 588   6                  } 
+ 589   5                  //WriteNbyte(0x01,&tmp[1],1);
+ 590   5                }           
+ 591   4                WriteNbyte(0x01,&clear_1,1);                //清除RTC定时中断标志 
+ 592   4                IE2=0x01;
+ 593   4              }       
+ 594   3            }
+ 595   2            //未入网成功，LED0常亮，继续请求入网，照明灯常亮
+ 596   2            else
+ 597   2            {               
+ 598   3              //照明灯亮（没有规则且实时指令）
+ 599   3              LED0=0;       
+ 600   3              Uart2SendStr(request,sizeof(request));        //等待入网
+ 601   3              Delay1ms(seed);
+ 602   3              WDT_CONTR|=0x10;          //清看门狗，否则系统复位
+ 603   3              Delay1ms(seed);
+ 604   3              WDT_CONTR|=0x10;          //清看门狗，否则系统复位
+C51 COMPILER V9.60.0.0   MAIN                                                              11/24/2022 15:43:12 PAGE 11  
+
+ 605   3              //判断是否是上电后第一次时间校准（作为入网）
+ 606   3              if(CRC_OK)
+ 607   3              {
+ 608   4                CRC_OK=0;
+ 609   4                if(first_b7&&Usart2_Rx_Buf[0]==0xB7&&Usart2_Rx_Buf[1]==0x08)
+ 610   4                {
+ 611   5                u8 h=0;
+ 612   5                u8 flag_mod;//查看是否是实时模式
+ 613   5                //写入校准时间
+ 614   5                for(i=0;i<6;i++)
+ 615   5                {           
+ 616   6                  time_set[i]=Usart2_Rx_Buf[2+i];               
+ 617   6                }
+ 618   5                WriteNbyte(0x02, time_set, 7);
+ 619   5                //从EEPROM中读取当前规则和数量  
+ 620   5                for(j=0;j<20;j++)
+ 621   5                {
+ 622   6                  current_rule[j]=IapRead(j);
+ 623   6                }
+ 624   5                while(current_rule[h]!=0xff)     
+ 625   5                {                   
+ 626   6                  h++;                  
+ 627   6                }
+ 628   5                //测试IIC通信是否正常
+ 629   5      //          ReadNbyte(0x03,current_time,2); 
+ 630   5      //          current_time[0]&=0x7f;//分
+ 631   5      //          current_time[1]&=0x3f;//时  
+ 632   5      //          Uart2SendStr(current_time,sizeof(current_time));
+ 633   5                current_number=h/3;       //记录规则数量
+ 634   5                flag_mod=IapRead(0x0400); //查看是否是实时模式
+ 635   5                //执行规则模式
+ 636   5                if(IapRead(0x0400)==0xff)
+ 637   5                {
+ 638   6                  day_clk=1;    //规则日志标志位                                        
+ 639   6                  //入网后没有规则灯常亮(%100)
+ 640   6                  if(current_rule[0]==0xff)
+ 641   6                  {
+ 642   7                    relay=1;
+ 643   7                    light=0x64;
+ 644   7                    WriteNbyte(0x09,clk_reset,2);
+ 645   7                  } 
+ 646   6                  //入网后有规则按规则走
+ 647   6                  else if(current_rule[0]!=0xff)
+ 648   6                  {
+ 649   7                    //查看当前时间
+ 650   7                    ReadNbyte(0x03,current_time,2); 
+ 651   7                    current_time[0]&=0x7f;//分
+ 652   7                    current_time[1]&=0x3f;//时  
+ 653   7                    //当前时间大于等于最后一个闹钟时
+ 654   7                    if(current_time[1]>current_rule[1+3*(current_number-1)]||(current_time[1]==current_rule[1+3*(curren
+             -t_number-1)]&&current_time[0]>=current_rule[3*(current_number-1)]))
+ 655   7                    {   
+ 656   8                      light=current_rule[2+3*(current_number-1)];
+ 657   8                      if(light==0x00)     relay=0;                          
+ 658   8                      else
+ 659   8                      { 
+ 660   9                        PWM_set(light*0x0030);                  
+ 661   9                        relay=1;                                            
+ 662   9                      }
+ 663   8                      WriteNbyte(0x09, clk_reset,2);                      
+ 664   8                    } 
+ 665   7                    //当前时间大等于于第一个闹钟小于最后一个闹钟时
+C51 COMPILER V9.60.0.0   MAIN                                                              11/24/2022 15:43:12 PAGE 12  
+
+ 666   7                    else if((current_time[1]>current_rule[1]||(current_time[1]==current_rule[1]&&current_time[0]>=curre
+             -nt_rule[0]))&&(current_time[1]<current_rule[1+3*(current_number-1)]||(current_time[1]==current_rule[1+3*(current_number-
+             -1)]&&current_time[0]<current_rule[3*(current_number-1)])))
+ 667   7                    {             
+ 668   8                      u8 clktime[2];
+ 669   8                      for(j=0;j<current_number-1;j++)
+ 670   8                      {
+ 671   9                        if((current_time[1]>current_rule[1+3*j]||(current_time[1]==current_rule[1+3*j]&&current_time[0]>=
+             -current_rule[3*j]))&&(current_time[1]<current_rule[4+3*j]||(current_time[1]==current_rule[4+3*j]&&current_time[0]<curren
+             -t_rule[3+3*j])))  
+ 672   9                        {   
+ 673  10                          light=current_rule[2+3*j];
+ 674  10                          if(light>0x00&&light<=0x64)     //规则亮度不为0
+ 675  10                          {
+ 676  11                            PWM_set(light*0x0030);                  
+ 677  11                            relay=1;                                          
+ 678  11                          }
+ 679  10                          else if(light==0x00)                          //规则亮度为0
+ 680  10                          {
+ 681  11                            relay=0;                        
+ 682  11                          }  
+ 683  10                          clktime[0]=current_rule[3+3*j];   //记录该设定的下一个闹钟
+ 684  10                          clktime[1]=current_rule[4+3*j];   
+ 685  10                          WriteNbyte(0x09, clktime,2);                          
+ 686  10                        }                               
+ 687   9                      } 
+ 688   8                    }
+ 689   7                  } 
+ 690   6                }       
+ 691   5                //执行实时模式
+ 692   5                else if(IapRead(0x0400)>=0x00&&IapRead(0x0400)<=0x64)
+ 693   5                {
+ 694   6                  real_flag=1;    //实时日志标志位
+ 695   6                  if(flag_mod==0x00)
+ 696   6                  {
+ 697   7                    relay=0;
+ 698   7                    light=0;
+ 699   7                  }         
+ 700   6                  else
+ 701   6                  {
+ 702   7                    PWM_set(flag_mod*0x0030);
+ 703   7                    relay=1;
+ 704   7                    light=(u16)flag_mod;
+ 705   7                  }
+ 706   6                  WriteNbyte(0x09, clk_reset, 2);
+ 707   6                }
+ 708   5                calibration_flag=1;           //校准标志位置1
+ 709   5                first_b7=0;                   //清除上电后第一次时钟校准标志位  
+ 710   5                request_flag=1;               //入网标志位
+ 711   5                //Usart2_Rx_Buf清零       
+ 712   5                for(j=0;j<Usart2_Rx_Buf[1]+3;j++)   
+ 713   5                {
+ 714   6                  Usart2_Rx_Buf[j]=0;
+ 715   6                }
+ 716   5                IE2 = 0x01;     //使能串口中断    
+ 717   5                }         
+ 718   4              }   
+ 719   3            }
+ 720   2          }
+ 721   1      } 
+ 722          //设置放大倍数函数（上电放大倍数判断进行初始化）
+ 723          void set_gain(void)
+C51 COMPILER V9.60.0.0   MAIN                                                              11/24/2022 15:43:12 PAGE 13  
+
+ 724          {
+ 725   1        u16 adc;
+ 726   1        crl=1;                      //2倍放大（初始化电流小倍数放大）
+ 727   1        //进行一次有效值测量
+ 728   1        adc=RMS_Average();
+ 729   1        //判断电压大小，选择放大倍数
+ 730   1        if(adc<=0x0180) crl=0;  //放大21倍
+ 731   1        else if(adc>0x0180)     crl=1;  //放大2倍
+ 732   1      }
+ 733          
+ 734          //实时控制命令函数，ack为1则回复，对于组播命令不要回复
+ 735          void real_control(u8 control_light,u8 ack)
+ 736          {
+ 737   1          real_flag=1;    //实时日志标志位
+ 738   1          //实时控制
+ 739   1          if(control_light>=0x00&&control_light<=0x64)
+ 740   1          {     
+ 741   2            IapErase(0x0400);//清除实时亮度
+ 742   2            if(control_light==0x00) relay=0;
+ 743   2            else
+ 744   2            { 
+ 745   3                PWM_set(control_light*0x0030);
+ 746   3                relay=1;                    
+ 747   3            }
+ 748   2            if(ack)   //判断是否需要回复应答
+ 749   2              Uart2SendStr(ACK,sizeof(ACK));
+ 750   2            WriteNbyte(0x09, clk_reset,2);          //关闭规则
+ 751   2            IapWrite(0x0400,control_light);//写入实时指令的亮度
+ 752   2            light=control_light;//记录当前亮度
+ 753   2          }
+ 754   1          //退出实时模式返回规则模式
+ 755   1          else if(control_light==0xff)
+ 756   1          { 
+ 757   2            u8 clear_1=0x02;
+ 758   2            IapErase(0x0400);//清除实时亮度
+ 759   2            ReadNbyte(0x03,current_time,2); 
+ 760   2            current_time[0]&=0x7f;//分
+ 761   2            current_time[1]&=0x3f;//时
+ 762   2            //有规则
+ 763   2            if(current_rule[0]!=0xff)
+ 764   2            {
+ 765   3              //当前时间大于等于最后一个闹钟时
+ 766   3              if(current_time[1]>current_rule[1+3*(current_number-1)]||(current_time[1]==current_rule[1+3*(current_n
+             -umber-1)]&&current_time[0]>=current_rule[3*(current_number-1)]))
+ 767   3              {         
+ 768   4                light=current_rule[2+3*(current_number-1)];
+ 769   4                if(light==0x00)   relay=0;
+ 770   4                else
+ 771   4                  { 
+ 772   5                    PWM_set(light*0x0030);                
+ 773   5                    relay=1;                  
+ 774   5                  }
+ 775   4                if(ack)   //判断是否需要回复应答
+ 776   4                  Uart2SendStr(ACK,sizeof(ACK));
+ 777   4                WriteNbyte(0x09, clk_reset,2);                    
+ 778   4              }
+ 779   3              //当前时间大于等于第一个闹钟小于最后一个闹钟时
+ 780   3              else if((current_time[1]>current_rule[1]||(current_time[1]==current_rule[1]&&current_time[0]>=current_
+             -rule[0]))&&(current_time[1]<current_rule[1+3*(current_number-1)]||(current_time[1]==current_rule[1+3*(current_number-1)]
+             -&&current_time[0]<current_rule[3*(current_number-1)])))
+ 781   3              {             
+ 782   4                u8 clktime[2];
+C51 COMPILER V9.60.0.0   MAIN                                                              11/24/2022 15:43:12 PAGE 14  
+
+ 783   4                int j;
+ 784   4                for(j=0;j<current_number-1;j++)
+ 785   4                {
+ 786   5                  if((current_time[1]>current_rule[1+3*j]||(current_time[1]==current_rule[1+3*j]&&current_time[0]>=cur
+             -rent_rule[3*j]))&&(current_time[1]<current_rule[4+3*j]||(current_time[1]==current_rule[4+3*j]&&current_time[0]<current_r
+             -ule[3+3*j])))          //当前时间大于前一个闹钟时小于后一个闹钟时
+ 787   5                  {   
+ 788   6                    light=current_rule[2+3*j];//记录当前亮度
+ 789   6                    if(light>0x00&&light<=0x64)     //规则亮度不为0
+ 790   6                    {
+ 791   7                      PWM_set(light*0x0030);                
+ 792   7                      relay=1;                                            
+ 793   7                    }
+ 794   6                    else if(light==0x00)                          //规则亮度为0
+ 795   6                    {
+ 796   7                      relay=0;
+ 797   7                    }
+ 798   6                    if(ack)   //判断是否需要回复应答
+ 799   6                      Uart2SendStr(ACK,sizeof(ACK));
+ 800   6                    clktime[0]=current_rule[3+3*j];   //设定下一个闹钟
+ 801   6                    clktime[1]=current_rule[4+3*j];   
+ 802   6                    WriteNbyte(0x09, clktime,2);
+ 803   6                  }                               
+ 804   5                } 
+ 805   4              }
+ 806   3            }
+ 807   2            //没有规则
+ 808   2            else
+ 809   2            {
+ 810   3              //没有规则全功率输出,写入00点闹钟
+ 811   3              PWM_set(0x12C0);                  
+ 812   3              relay=1;
+ 813   3              light=0x64;
+ 814   3              WriteNbyte(0x09, clk_reset,2);
+ 815   3              if(ack)   //判断是否需要回复应答
+ 816   3                Uart2SendStr(ACK,sizeof(ACK));              
+ 817   3            }
+ 818   2              WriteNbyte(0x01,&clear_1,1);//使能时钟中断
+ 819   2            }
+ 820   1      }
+ 821          
+ 822          
+ 823          //当日规则命令函数
+ 824          void today_rule(u8 size_t,u8 * rule,u8 ack)
+ 825          {
+ 826   1        if(size_t%3==0&&size_t<=0x14)       
+ 827   1        {
+ 828   2          u16 add;
+ 829   2          int j=0;
+ 830   2          u8 clear_1=0x02;
+ 831   2          ReadNbyte(0x03,current_time,2); 
+ 832   2          current_time[0]&=0x7f;//分
+ 833   2          current_time[1]&=0x3f;//时
+ 834   2          IapErase(0x0000); //擦除当日规则
+ 835   2          IapErase(0x0200); //擦除次日规则              
+ 836   2          for(add=0;add<size_t;add++)         //写入当日规则分/时/亮度
+ 837   2          {
+ 838   3            IapWrite(add,rule[add]);                  
+ 839   3          }
+ 840   2          for(add=0;add<size_t;add++)         //写入次日规则分/时/亮度
+ 841   2          {
+ 842   3            IapWrite(add+0x0200,rule[add]);                 
+C51 COMPILER V9.60.0.0   MAIN                                                              11/24/2022 15:43:12 PAGE 15  
+
+ 843   3          }
+ 844   2          for(j=0;j<size_t;j++)               //读取当日规则
+ 845   2          {
+ 846   3            current_rule[j]=IapRead(j);
+ 847   3          }             
+ 848   2          current_number=size_t/3;            //更新当日闹钟数  
+ 849   2          LED2=0;   
+ 850   2          //当前时间大于等于最后一个闹钟时
+ 851   2          if(current_time[1]>current_rule[1+3*(current_number-1)]||(current_time[1]==current_rule[1+3*(current_num
+             -ber-1)]&&current_time[0]>=current_rule[3*(current_number-1)]))
+ 852   2          { 
+ 853   3            //判断当前执行模式
+ 854   3            if(IapRead(0x0400)==0xff)//执行规则模式
+ 855   3            {
+ 856   4              day_clk=1;    //日志标志位
+ 857   4              light=current_rule[2+3*(current_number-1)];
+ 858   4              if(current_rule[2+3*(current_number-1)]==0x00)
+ 859   4              {
+ 860   5                relay=0;
+ 861   5              }
+ 862   4              else
+ 863   4              { 
+ 864   5                PWM_set(light*0x0030);                
+ 865   5                relay=1;                                      
+ 866   5              }
+ 867   4              WriteNbyte(0x09, clk_reset,2);
+ 868   4            } 
+ 869   3            else if(IapRead(0x0400)>=0x00&&IapRead(0x0400)<=0x64)//执行实时模式
+ 870   3            {
+ 871   4              WriteNbyte(0x09, clk_reset,2);  
+ 872   4            }
+ 873   3            if(ack)
+ 874   3              Uart2SendStr(ACK,sizeof(ACK));
+ 875   3          } 
+ 876   2          //当前时间大于第一个闹钟小于最后一个闹钟时
+ 877   2          else if((current_time[1]>current_rule[1]||(current_time[1]==current_rule[1]&&current_time[0]>=current_ru
+             -le[0]))&&(current_time[1]<current_rule[1+3*(current_number-1)]||(current_time[1]==current_rule[1+3*(current_number-1)]&&
+             -current_time[0]<current_rule[3*(current_number-1)])))
+ 878   2          {             
+ 879   3            u8 clktime[2];//下一个规则时间
+ 880   3            for(j=0;j<current_number-1;j++)
+ 881   3            {
+ 882   4              if((current_time[1]>current_rule[1+3*j]||(current_time[1]==current_rule[1+3*j]&&current_time[0]>=curre
+             -nt_rule[3*j]))&&(current_time[1]<current_rule[4+3*j]||(current_time[1]==current_rule[4+3*j]&&current_time[0]<current_rul
+             -e[3+3*j])))  
+ 883   4              {   
+ 884   5                if(IapRead(0x0400)==0xff)//执行规则模式
+ 885   5                {
+ 886   6                  day_clk=1;    //日志标志位
+ 887   6                  light=current_rule[2+3*j];
+ 888   6                  if(current_rule[2+3*j]>0x00&&current_rule[2+3*j]<=0x64)     //规则亮度不为0
+ 889   6                  {
+ 890   7                    PWM_set(light*0x0030);                  
+ 891   7                    relay=1;                                          
+ 892   7                  }
+ 893   6                  else if(current_rule[2+3*j]==0x00)                          //规则亮度为0
+ 894   6                  {
+ 895   7                    relay=0;                        
+ 896   7                  }
+ 897   6                  clktime[0]=current_rule[3+3*j];   //记录该设定的下一个闹钟
+ 898   6                  clktime[1]=current_rule[4+3*j];   
+ 899   6                  WriteNbyte(0x09, clktime,2);
+C51 COMPILER V9.60.0.0   MAIN                                                              11/24/2022 15:43:12 PAGE 16  
+
+ 900   6                }
+ 901   5                //执行实时模式
+ 902   5                else if(IapRead(0x0400)>=0x00&&IapRead(0x0400)<=0x64)
+ 903   5                {
+ 904   6                  WriteNbyte(0x09, clk_reset,2);
+ 905   6                }
+ 906   5                if(ack)
+ 907   5                  Uart2SendStr(ACK,sizeof(ACK));  
+ 908   5              }                               
+ 909   4            } 
+ 910   3          }
+ 911   2          WriteNbyte(0x01, &clear_1,1); //使能闹钟中断
+ 912   2        }
+ 913   1        else if(ack)
+ 914   1          Uart2SendStr(NOACK,sizeof(NOACK));
+ 915   1      }
+ 916          
+ 917          //次日规则命令函数，传入数据长度，规则以及是否应答
+ 918          void tomorrow_rule(u8 size_t,u8 * rule,u8 ack)
+ 919          {
+ 920   1        u8 clear_1=0x02;
+ 921   1        //只接收6个时间段
+ 922   1        if(size_t%3==0&&size_t<0x14)        
+ 923   1        {
+ 924   2          u16 add;                
+ 925   2          IapErase(0x0200);//清除次日规则                                             
+ 926   2          for(add=0;add<size_t;add++)         //写入分/时/亮度(下一天的规则写在第二页)
+ 927   2          {
+ 928   3            IapWrite((add+0x0200),rule[add]);                   
+ 929   3          }
+ 930   2          //当前没规则
+ 931   2          if(IapRead(0x0000)==0xff)
+ 932   2          {
+ 933   3            WriteNbyte(0x09, clk_reset,2);
+ 934   3            WriteNbyte(0x01, &clear_1,1); //使能闹钟中断
+ 935   3          }
+ 936   2          if(ack)
+ 937   2            Uart2SendStr(ACK,sizeof(ACK));
+ 938   2        }
+ 939   1        else if(ack)
+ 940   1          Uart2SendStr(NOACK,sizeof(NOACK));
+ 941   1      }
+
+
+MODULE INFORMATION:   STATIC OVERLAYABLE
+   CODE SIZE        =   7051    ----
+   CONSTANT SIZE    =   ----    ----
+   XDATA SIZE       =     85      60
+   PDATA SIZE       =   ----    ----
+   DATA SIZE        =   ----    ----
+   IDATA SIZE       =   ----    ----
+   BIT SIZE         =      8    ----
+END OF MODULE INFORMATION.
+
+
+C51 COMPILATION COMPLETE.  0 WARNING(S),  0 ERROR(S)

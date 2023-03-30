@@ -1,0 +1,79 @@
+C51 COMPILER V9.60.0.0   EEPROM                                                            11/24/2022 15:43:12 PAGE 1   
+
+
+C51 COMPILER V9.60.0.0, COMPILATION OF MODULE EEPROM
+OBJECT MODULE PLACED IN .\Objects\eeprom.obj
+COMPILER INVOKED BY: D:\Keil_v5\C51\BIN\C51.EXE ..\Hardware\EEPROM\eeprom.c LARGE OPTIMIZE(8,SPEED) BROWSE INCDIR(..\Use
+                    -r;..\Hardware\SYSCLK;..\Hardware\GPIOConfig;..\Hardware\Delay;..\Hardware\usart;..\Hardware\I2C;..\Hardware\ADC;..\Hardw
+                    -are\PWM;..\Hardware\EEPROM;..\Hardware\ADC11;..\Hardware\TIM) DEBUG OBJECTEXTEND PRINT(.\Listings\eeprom.lst) TABS(2) OB
+                    -JECT(.\Objects\eeprom.obj)
+
+line level    source
+
+   1          #include <eeprom.h>
+   2          #include <intrins.h>
+   3          
+   4          void IapIdle()
+   5          {
+   6   1          IAP_CONTR = 0;            //禁止EEPROM操作 
+   7   1          IAP_CMD = 0;              // 执行空操作
+   8   1          IAP_TRIG = 0;             // 
+   9   1          IAP_ADDRH = 0x80;         //将地址设置到非IAP区
+  10   1          IAP_ADDRL = 0; 
+  11   1      }
+  12          //读操作
+  13          u8 IapRead(u16 addr) 
+  14          {  
+  15   1          u8 dat;   
+  16   1          IAP_CONTR = WT_12M;     //使能IAP，12M
+  17   1          IAP_CMD = 1;            //读EEPROM命令
+  18   1          IAP_ADDRL = addr;   
+  19   1          IAP_ADDRH = addr >> 8;  //写入目标地址 
+  20   1          IAP_TRIG = 0x5a;        //触发寄存器
+  21   1          IAP_TRIG = 0xa5;        //写入5A,A5触发相应的读写操作
+  22   1          _nop_();                //延时1us
+  23   1          dat = IAP_DATA;   
+  24   1          IapIdle();              //关闭IAP
+  25   1          return dat; 
+  26   1      } 
+  27          //写操作  
+  28          void IapWrite(u16 addr,u8 dat) 
+  29          {     
+  30   1          IAP_CONTR = WT_12M;     //使能IAP，12M 
+  31   1          IAP_CMD = 2;            //写EEPROM命令
+  32   1          IAP_ADDRL = addr;   
+  33   1          IAP_ADDRH = addr >> 8;  //写入目标地址 
+  34   1          IAP_DATA=dat;           //写入IAP数据
+  35   1          IAP_TRIG = 0x5a;        //触发寄存器
+  36   1          IAP_TRIG = 0xa5;        //写入5A,A5触发相应的读写操作
+  37   1          _nop_();                //延时1us   
+  38   1          IapIdle();              //关闭IAP
+  39   1      } 
+  40          //擦除操作
+  41          void IapErase(u16 addr) 
+  42          {     
+  43   1          IAP_CONTR = WT_12M;     //使能IAP，12M
+  44   1          IAP_CMD = 3;            //擦除EEPROM命令
+  45   1          IAP_ADDRL = addr;   
+  46   1          IAP_ADDRH = addr >> 8;  //写入目标地址 
+  47   1          IAP_TRIG = 0x5a;        //触发寄存器
+  48   1          IAP_TRIG = 0xa5;        //写入5A,A5触发相应的读写操作
+  49   1          _nop_();                //延时1us   
+  50   1          IapIdle();              //关闭IAP
+  51   1      }
+
+C51 COMPILER V9.60.0.0   EEPROM                                                            11/24/2022 15:43:12 PAGE 2   
+
+
+MODULE INFORMATION:   STATIC OVERLAYABLE
+   CODE SIZE        =     82    ----
+   CONSTANT SIZE    =   ----    ----
+   XDATA SIZE       =   ----    ----
+   PDATA SIZE       =   ----    ----
+   DATA SIZE        =   ----    ----
+   IDATA SIZE       =   ----    ----
+   BIT SIZE         =   ----    ----
+END OF MODULE INFORMATION.
+
+
+C51 COMPILATION COMPLETE.  0 WARNING(S),  0 ERROR(S)

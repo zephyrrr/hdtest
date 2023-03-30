@@ -1,0 +1,102 @@
+C51 COMPILER V9.60.0.0   IM1253B                                                           07/07/2021 13:00:50 PAGE 1   
+
+
+C51 COMPILER V9.60.0.0, COMPILATION OF MODULE IM1253B
+OBJECT MODULE PLACED IN .\Objects\im1253b.obj
+COMPILER INVOKED BY: D:\SOFTWARE\C51\BIN\C51.EXE ..\Hardware\im1253b\im1253b.c LARGE OPTIMIZE(8,SPEED) BROWSE INCDIR(..\
+                    -User;..\Hardware\LED;..\Hardware\SYSCLK;..\Hardware\GPIOConfig;..\Hardware\Delay;..\Hardware\OLED;..\Hardware\lora;..\Ha
+                    -rdware\usart;..\Hardware\im1253b) DEBUG OBJECTEXTEND PRINT(.\Listings\im1253b.lst) TABS(2) OBJECT(.\Objects\im1253b.obj)
+
+line level    source
+
+   1          #include "im1253b.h"
+   2          
+   3          
+   4          u32 Voltage,Current,Power,Energy,Pf,CO2;
+   5          // 计算CRC
+   6          u16 calccrc(u8 crcbuf,u16 crc)
+   7          {
+   8   1          u8 i;
+   9   1          u8 chk;
+  10   1          crc=crc^crcbuf;
+  11   1          for(i=0;i<8;i++)
+  12   1          {
+  13   2              chk=(u8)(crc&1);
+  14   2              crc=crc>>1;
+  15   2              crc=crc&0x7fff;
+  16   2              if(chk==1)
+  17   2              crc=crc^0xa001;
+  18   2              crc=crc&0xffff;
+  19   2          }
+  20   1          return crc;
+  21   1      }
+  22          
+  23          // 校验CRC
+  24          u16 chkcrc(u8 *buf,u8 len)
+  25          {
+  26   1          u8 hi,lo;
+  27   1          u16 i;
+  28   1          u16 crc;
+  29   1          crc=0xFFFF;
+  30   1          for(i=0;i<len;i++)
+  31   1          {
+  32   2              crc=calccrc(*buf,crc);
+  33   2              buf++;
+  34   2          }
+  35   1          hi=(u8)(crc%256);
+  36   1          lo=(u8)(crc/256);
+  37   1          crc=(((u16)(hi))<<8)|lo;
+  38   1          return crc;
+  39   1      }
+  40          
+  41          
+  42          ////解析数据
+  43          //void IM_Analysis(void)
+  44          //{
+  45          //    union crcdata
+  46          //    {
+  47          //      u16 word16;
+  48          //      u8 byte[2];
+  49          //    }crcnow;
+  50          //    
+  51          //    if(USART3_State==1) //接收完成
+  52          //    {
+  53          //        USART3_State=0;
+C51 COMPILER V9.60.0.0   IM1253B                                                           07/07/2021 13:00:50 PAGE 2   
+
+  54          //        if(USART3_Rx_Buf[0]==DEVICE_ID) //确认 ID 正确
+  55          //        {
+  56          //            crcnow.word16=chkcrc(USART3_Rx_Buf,USART3_Len-2); //reveive_numbe 是接收数据总长度
+  57          //            if((crcnow.byte[0]==USART3_Rx_Buf[USART3_Len-1])&&(crcnow.byte[1]==USART3_Rx_Buf[USART3_Len-
+             -2]))//确认 CRC 校验正确
+  58          //            {
+  59          //                Voltage=(((u32)(USART3_Rx_Buf[3]))<<24)|(((u32)(USART3_Rx_Buf[4]))<<16)|(((u32)(USART3_R
+             -x_Buf[5]))<<8)|USART3_Rx_Buf[6];
+  60          //                Current=(((u32)(USART3_Rx_Buf[7]))<<24)|(((u32)(USART3_Rx_Buf[8]))<<16)|(((u32)(USART3_R
+             -x_Buf[9]))<<8)|USART3_Rx_Buf[10];
+  61          //                Power=(((u32)(USART3_Rx_Buf[11]))<<24)|(((u32)(USART3_Rx_Buf[12]))<<16)|(((u32)(USART3_R
+             -x_Buf[13]))<<8)|USART3_Rx_Buf[14];
+  62          //                Energy=(((u32)(USART3_Rx_Buf[15]))<<24)|(((u32)(USART3_Rx_Buf[16]))<<16)|(((u32)(USART3_
+             -Rx_Buf[17]))<<8)|USART3_Rx_Buf[18];
+  63          //                Pf=(((u32)(USART3_Rx_Buf[19]))<<24)|(((u32)(USART3_Rx_Buf[20]))<<16)|(((u32)(USART3_Rx_B
+             -uf[21]))<<8)|USART3_Rx_Buf[22];
+  64          //                CO2=(((u32)(USART3_Rx_Buf[23]))<<24)|(((u32)(USART3_Rx_Buf[24]))<<16)|(((u32)(USART3_Rx_
+             -Buf[25]))<<8)|USART3_Rx_Buf[26];
+  65          //            }
+  66          //        }
+  67          //    }
+  68          //}
+
+
+MODULE INFORMATION:   STATIC OVERLAYABLE
+   CODE SIZE        =    184    ----
+   CONSTANT SIZE    =   ----    ----
+   XDATA SIZE       =     24       8
+   PDATA SIZE       =   ----    ----
+   DATA SIZE        =   ----    ----
+   IDATA SIZE       =   ----    ----
+   BIT SIZE         =   ----    ----
+END OF MODULE INFORMATION.
+
+
+C51 COMPILATION COMPLETE.  0 WARNING(S),  0 ERROR(S)

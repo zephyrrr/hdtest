@@ -1,0 +1,47 @@
+C51 COMPILER V9.60.0.0   ADC11                                                             11/24/2022 15:43:12 PAGE 1   
+
+
+C51 COMPILER V9.60.0.0, COMPILATION OF MODULE ADC11
+OBJECT MODULE PLACED IN .\Objects\ADC11.obj
+COMPILER INVOKED BY: D:\Keil_v5\C51\BIN\C51.EXE ..\Hardware\ADC11\ADC11.c LARGE OPTIMIZE(8,SPEED) BROWSE INCDIR(..\User;
+                    -..\Hardware\SYSCLK;..\Hardware\GPIOConfig;..\Hardware\Delay;..\Hardware\usart;..\Hardware\I2C;..\Hardware\ADC;..\Hardwar
+                    -e\PWM;..\Hardware\EEPROM;..\Hardware\ADC11;..\Hardware\TIM) DEBUG OBJECTEXTEND PRINT(.\Listings\ADC11.lst) TABS(2) OBJEC
+                    -T(.\Objects\ADC11.obj)
+
+line level    source
+
+   1          #include <ADC11.h>
+   2          #include <gpioconfig.h>
+   3          #include <intrins.h>
+   4          //ADC配置
+   5          void ADC11_init()
+   6          {
+   7   1        ADCCFG=0X2F;//右对齐,ADC转换时间为512个时钟数
+   8   1        ADC_CONTR=0X8B;//打开ADC电源，选择P1.2做为ADC
+   9   1      }
+  10          
+  11          u8 ADC11_Get()
+  12          {
+  13   1        u8 ADC;
+  14   1        ADC_CONTR |= 0x40; // 启动ADC
+  15   1        _nop_();  
+  16   1        _nop_();  
+  17   1        while (!(ADC_CONTR & 0x20)); //等待ADC完成 
+  18   1        ADC_CONTR &= ~0x20; //  清除完成标志位 
+  19   1        ADC = ADC_RESL; //读取ADC低8位
+  20   1        return ADC;
+  21   1      }
+
+
+MODULE INFORMATION:   STATIC OVERLAYABLE
+   CODE SIZE        =     23    ----
+   CONSTANT SIZE    =   ----    ----
+   XDATA SIZE       =   ----    ----
+   PDATA SIZE       =   ----    ----
+   DATA SIZE        =   ----    ----
+   IDATA SIZE       =   ----    ----
+   BIT SIZE         =   ----    ----
+END OF MODULE INFORMATION.
+
+
+C51 COMPILATION COMPLETE.  0 WARNING(S),  0 ERROR(S)

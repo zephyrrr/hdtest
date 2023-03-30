@@ -1,0 +1,46 @@
+C51 COMPILER V9.60.0.0   SYSCLK                                                            11/24/2022 15:43:10 PAGE 1   
+
+
+C51 COMPILER V9.60.0.0, COMPILATION OF MODULE SYSCLK
+OBJECT MODULE PLACED IN .\Objects\SYSCLK.obj
+COMPILER INVOKED BY: D:\Keil_v5\C51\BIN\C51.EXE ..\Hardware\SYSCLK\SYSCLK.c LARGE OPTIMIZE(8,SPEED) BROWSE INCDIR(..\Use
+                    -r;..\Hardware\SYSCLK;..\Hardware\GPIOConfig;..\Hardware\Delay;..\Hardware\usart;..\Hardware\I2C;..\Hardware\ADC;..\Hardw
+                    -are\PWM;..\Hardware\EEPROM;..\Hardware\ADC11;..\Hardware\TIM) DEBUG OBJECTEXTEND PRINT(.\Listings\SYSCLK.lst) TABS(2) OB
+                    -JECT(.\Objects\SYSCLK.obj)
+
+line level    source
+
+   1          #include <sysclk.h>
+   2          #include <stc8.h>
+   3          
+   4          void sysclk_init()
+   5          {
+   6   1          P_SW2 = 0x80;
+   7   1          XOSCCR = 0xc0;            //启动外部晶振
+   8   1          while (!(XOSCCR & 1));    //等待时钟稳定
+   9   1          CLKDIV = 0x00;            //时钟不分频
+  10   1          CKSEL = 0x01;             //选择外部晶振
+  11   1          P_SW2 = 0x00;
+  12   1          /*
+  13   1          P_SW2 = 0x80;
+  14   1          IRC32KCR = 0x80;          //启动内部 32K IRC
+  15   1          while (!(IRC32KCR & 1));  //等待时钟稳定
+  16   1          CLKDIV = 0x00;            //时钟不分频
+  17   1          CKSEL = 0x03;             //选择内部 32K
+  18   1          P_SW2 = 0x00;
+  19   1          */
+  20   1      }
+
+
+MODULE INFORMATION:   STATIC OVERLAYABLE
+   CODE SIZE        =     30    ----
+   CONSTANT SIZE    =   ----    ----
+   XDATA SIZE       =   ----    ----
+   PDATA SIZE       =   ----    ----
+   DATA SIZE        =   ----    ----
+   IDATA SIZE       =   ----    ----
+   BIT SIZE         =   ----    ----
+END OF MODULE INFORMATION.
+
+
+C51 COMPILATION COMPLETE.  0 WARNING(S),  0 ERROR(S)

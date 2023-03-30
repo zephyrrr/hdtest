@@ -1,0 +1,63 @@
+C51 COMPILER V9.60.0.0   KEY                                                               09/15/2021 13:42:23 PAGE 1   
+
+
+C51 COMPILER V9.60.0.0, COMPILATION OF MODULE KEY
+OBJECT MODULE PLACED IN .\Objects\key.obj
+COMPILER INVOKED BY: D:\SOFTWARE\C51\BIN\C51.EXE ..\Hardware\KEY\key.c LARGE OPTIMIZE(8,SPEED) BROWSE INCDIR(..\User;..\
+                    -Hardware\SYSCLK;..\Hardware\GPIOConfig;..\Hardware\Delay;..\Hardware\usart;..\Hardware\I2C;..\Hardware\ADC;..\Hardware\P
+                    -WM;..\Hardware\EEPROM;..\Hardware\KEY) DEBUG OBJECTEXTEND PRINT(.\Listings\key.lst) TABS(2) OBJECT(.\Objects\key.obj)
+
+line level    source
+
+   1          #include <key.h>
+   2          #include <GPIOConfig.h>
+   3          #include <usart2.h>
+   4          #include <delay.h>
+   5          
+   6          u8 test[5]={0x42,0x26,0x23};
+   7          u8 test1[5]={0x24,0x52,0x69};
+   8          void KEY_init()
+   9          {
+  10   1        INTCLKO = 0x30; //使能INT2和INT3中断 
+  11   1      }
+  12          
+  13          void INT2Isr()   interrupt 10 using 1
+  14          {
+  15   1        if(KEY0==0)
+  16   1        {
+  17   2          delay_ms(10);     //消抖
+  18   2          if(KEY0==0)
+  19   2          {
+  20   3            LED2=0; 
+  21   3            Uart2SendStr(test,sizeof(test));
+  22   3          }
+  23   2        }
+  24   1      }
+  25          
+  26          
+  27          void INT3Isr()   interrupt 11 using 1
+  28          {
+  29   1        if(KEY1==0)
+  30   1        {
+  31   2          delay_ms(10);
+  32   2          if(KEY1==0)
+  33   2          {
+  34   3            LED1=0;
+  35   3            Uart2SendStr(test1,sizeof(test1));
+  36   3          }
+  37   2        }
+  38   1      }
+
+
+MODULE INFORMATION:   STATIC OVERLAYABLE
+   CODE SIZE        =    100    ----
+   CONSTANT SIZE    =   ----    ----
+   XDATA SIZE       =     10    ----
+   PDATA SIZE       =   ----    ----
+   DATA SIZE        =   ----    ----
+   IDATA SIZE       =   ----    ----
+   BIT SIZE         =   ----    ----
+END OF MODULE INFORMATION.
+
+
+C51 COMPILATION COMPLETE.  0 WARNING(S),  0 ERROR(S)

@@ -1,0 +1,203 @@
+C51 COMPILER V9.60.0.0   USART2                                                            11/24/2022 15:43:11 PAGE 1   
+
+
+C51 COMPILER V9.60.0.0, COMPILATION OF MODULE USART2
+OBJECT MODULE PLACED IN .\Objects\usart2.obj
+COMPILER INVOKED BY: D:\Keil_v5\C51\BIN\C51.EXE ..\Hardware\usart\usart2.c LARGE OPTIMIZE(8,SPEED) BROWSE INCDIR(..\User
+                    -;..\Hardware\SYSCLK;..\Hardware\GPIOConfig;..\Hardware\Delay;..\Hardware\usart;..\Hardware\I2C;..\Hardware\ADC;..\Hardwa
+                    -re\PWM;..\Hardware\EEPROM;..\Hardware\ADC11;..\Hardware\TIM) DEBUG OBJECTEXTEND PRINT(.\Listings\usart2.lst) TABS(2) OBJ
+                    -ECT(.\Objects\usart2.obj)
+
+line level    source
+
+   1          #include <usart2.h>
+   2          #include <GPIOConfig.h>
+   3          #include <eeprom.h>
+   4          #include <I2C.h>
+   5          #include <stdio.h>
+   6          #include <Delay.h>
+   7          #include <eeprom.h>
+   8          #define FOSC 12000000UL 
+   9          #define BRT1 (65536 - FOSC/9600/4)
+  10          #define BRT2 (65536 - FOSC/115200/4)
+  11          bit busy;
+  12          u8 Usart2_Rx_Buf[20]; 
+  13          u8 ACK[4];
+  14          u8 NOACK[4];
+  15          bit CRC_OK;
+  16          u8 Usart2_Rx_Sum;
+  17          //串口2初始化
+  18          void Uart2_Init_9600()
+  19          {
+  20   1        S2CON = 0x50; 
+  21   1        T2L = BRT1;  //计数寄存器低8位
+  22   1        T2H = BRT1 >> 8; //计数寄存器高8位
+  23   1        IP2=0X00;
+  24   1        IP2H=0X01;    //优先级为2级（较高级）
+  25   1        AUXR = 0x14; //定时器2辅助寄存器，不分频，开始计数
+  26   1      } 
+  27          void Uart2_Init_115200()
+  28          {
+  29   1        S2CON = 0x50; //模式0，允许串口接收
+  30   1        T2L = BRT2;  //计数寄存器低8位
+  31   1        T2H = BRT2 >> 8; //计数寄存器高8位
+  32   1        IP2=0X00;
+  33   1        IP2H=0X01;    //优先级为2级（较高级）
+  34   1        AUXR = 0x14; //定时器2辅助寄存器，不分频，开始计数
+  35   1        IE2 = 0x01;//使能串口中断
+  36   1      }
+  37          
+  38          //串口中断服务函数
+  39          void Uart2Isr()   interrupt 8 using 2
+  40          {
+  41   1        static u8 first=0;
+  42   1        static u8 second=0;
+  43   1        static u8 third=0;
+  44   1        static u8 Usart2_Rx_Num=0;
+  45   1        static u8 j=0;
+  46   1        if(S2CON&0x01)//接收中断
+  47   1        {   
+  48   2          first=second;
+  49   2          second=third;
+  50   2          third=S2BUF;
+  51   2          if(first==0xA5&&(second==0xB2||second==0xB3||second==0xB5||second==0xB6||second==0xB7||second==0xB8||sec
+             -ond==0xBB||second==0xBD||second==0xBE))//判断帧头及命令字
+C51 COMPILER V9.60.0.0   USART2                                                            11/24/2022 15:43:11 PAGE 2   
+
+  52   2          { 
+  53   3            Usart2_Rx_Buf[0]=second;//接收命令字
+  54   3            Usart2_Rx_Buf[1]=third; //接收字节数
+  55   3            Usart2_Rx_Num=2;
+  56   3            
+  57   3          }
+  58   2          else if(Usart2_Rx_Buf[0]==0xB2||Usart2_Rx_Buf[0]==0xB3||Usart2_Rx_Buf[0]==0xB5||Usart2_Rx_Buf[0]==0xB6||
+             -Usart2_Rx_Buf[0]==0xB7||Usart2_Rx_Buf[0]==0xB8||Usart2_Rx_Buf[0]==0xBB||Usart2_Rx_Buf[0]==0xBD||Usart2_Rx_Buf[0]==0xBE)
+  59   2          {     
+  60   3            Usart2_Rx_Buf[Usart2_Rx_Num]=third;
+  61   3            Usart2_Rx_Num++;
+  62   3            if(Usart2_Rx_Num==Usart2_Rx_Buf[1]+3)                         //数据接收完成
+  63   3            {     
+  64   4              Usart2_Rx_Num=0;  //数据长度清零
+  65   4              Usart2_Rx_Sum=0;//求和校验        
+  66   4              for(j=0;j<Usart2_Rx_Buf[1]+2;j++)
+  67   4              {
+  68   5                Usart2_Rx_Sum+=Usart2_Rx_Buf[j];
+  69   5              } 
+  70   4              Usart2_Rx_Sum+=0xA5;
+  71   4              //正确应答
+  72   4              ACK[0]=Usart2_Rx_Buf[0];
+  73   4              ACK[1]=0x01;
+  74   4              ACK[2]=0x10;
+  75   4              ACK[3]=ACK[0]+ACK[1]+ACK[2];
+  76   4              //错误应答
+  77   4              NOACK[0]=Usart2_Rx_Buf[0];
+  78   4              NOACK[1]=0x01;
+  79   4              NOACK[2]=0x11;
+  80   4              NOACK[3]=NOACK[0]+NOACK[1]+NOACK[2];
+  81   4              if(Usart2_Rx_Sum==Usart2_Rx_Buf[Usart2_Rx_Buf[1]+2])//求和校验正确
+  82   4              {
+  83   5                CRC_OK=1;//校验正确标志
+  84   5                if(Usart2_Rx_Buf[0]==0xB6||Usart2_Rx_Buf[0]==0xB3||Usart2_Rx_Buf[0]==0xB5||Usart2_Rx_Buf[0]==0xB7||Us
+             -art2_Rx_Buf[0]==0xB8||Usart2_Rx_Buf[0]==0xBB||Usart2_Rx_Buf[0]==0xBD||Usart2_Rx_Buf[0]==0xBE)
+  85   5                { 
+  86   6                  LED1=0;
+  87   6                  IE2 = 0x00;     //禁止串口中断
+  88   6                }
+  89   5              } 
+  90   4              else
+  91   4              {
+  92   5                CRC_OK=0;
+  93   5                //Usart2_Rx_Buf清零       
+  94   5                for(j=0;j<Usart2_Rx_Buf[1]+3;j++)   
+  95   5                {
+  96   6                  Usart2_Rx_Buf[j]=0;
+  97   6                }
+  98   5                //Uart2SendStr(NOACK,sizeof(NOACK));
+  99   5              }
+ 100   4            }         
+ 101   3          }       
+ 102   2          S2CON&=~0x01;//清除接收中断标志位
+ 103   2        }   
+ 104   1      }             
+ 105                
+ 106          
+ 107          //串口发送单个字节
+ 108          void Uart2Send(u8 dat)
+ 109           {
+ 110   1         IE2 = 0x00;//关闭使能中断
+ 111   1         S2BUF =dat;
+C51 COMPILER V9.60.0.0   USART2                                                            11/24/2022 15:43:11 PAGE 3   
+
+ 112   1         while(!(S2CON&0x02));
+ 113   1         S2CON&=~0x02;
+ 114   1         IE2 = 0x01;//使能接收中断   
+ 115   1       } 
+ 116          
+ 117          //串口发送字符串 
+ 118          void Uart2SendStr(u8 *p,u8 i)
+ 119          { 
+ 120   1        u8 j;
+ 121   1        for(j=0;j<i;j++) 
+ 122   1        { 
+ 123   2          Uart2Send(*p++); 
+ 124   2        } 
+ 125   1      } 
+ 126          
+ 127          void putchar(char c)
+ 128          {
+ 129   1        IE2 = 0x00;
+ 130   1        S2BUF =c;
+ 131   1        while(!(S2CON&0x02));
+ 132   1        S2CON&=~0x02; 
+ 133   1        IE2 = 0x01;
+ 134   1      }
+ 135          
+ 136          //LoRa模块配置(包括修改波特率)
+ 137          void LoRa_Config()
+ 138          {
+ 139   1        LED3=0;
+ 140   1        Uart2_Init_115200();
+ 141   1        Delay100ms();
+ 142   1        printf("+++");
+ 143   1        Delay100ms();
+ 144   1        printf("AT+TSF=07\r\n");
+ 145   1        Delay100ms();
+ 146   1        printf("AT+RSF=07\r\n");
+ 147   1        Delay100ms();
+ 148   1        printf("AT+TPREM=0028\r\n");
+ 149   1        Delay100ms();
+ 150   1        printf("AT+RPREM=0028\r\n");
+ 151   1        Delay100ms();
+ 152   1        printf("AT+SIP=01\r\n");
+ 153   1        Delay100ms();
+ 154   1        //设置新的频段，接收频段505.5MHz，发射基频473.5MHz
+ 155   1        printf("AT+TFREQ=1C390960\r\n");
+ 156   1        Delay100ms();
+ 157   1        printf("AT+RFREQ=1E215160\r\n");
+ 158   1        Delay100ms();
+ 159   1      //  printf("AT+BRATE=07\r\n");
+ 160   1      //  Delay100ms();
+ 161   1      //  Uart2_Init_115200();
+ 162   1      //  Delay100ms();
+ 163   1      //  printf("+++");
+ 164   1      //  Delay100ms();
+ 165   1        printf("ATT\r\n");
+ 166   1        Delay100ms();
+ 167   1      }
+ 168          
+
+
+MODULE INFORMATION:   STATIC OVERLAYABLE
+   CODE SIZE        =    720    ----
+   CONSTANT SIZE    =    118    ----
+C51 COMPILER V9.60.0.0   USART2                                                            11/24/2022 15:43:11 PAGE 4   
+
+   XDATA SIZE       =     34       3
+   PDATA SIZE       =   ----    ----
+   DATA SIZE        =   ----    ----
+   IDATA SIZE       =   ----    ----
+   BIT SIZE         =      2    ----
+END OF MODULE INFORMATION.
+
+
+C51 COMPILATION COMPLETE.  0 WARNING(S),  0 ERROR(S)

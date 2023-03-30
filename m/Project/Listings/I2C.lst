@@ -1,0 +1,240 @@
+C51 COMPILER V9.60.0.0   I2C                                                               11/24/2022 15:43:11 PAGE 1   
+
+
+C51 COMPILER V9.60.0.0, COMPILATION OF MODULE I2C
+OBJECT MODULE PLACED IN .\Objects\I2C.obj
+COMPILER INVOKED BY: D:\Keil_v5\C51\BIN\C51.EXE ..\Hardware\I2C\I2C.c LARGE OPTIMIZE(8,SPEED) BROWSE INCDIR(..\User;..\H
+                    -ardware\SYSCLK;..\Hardware\GPIOConfig;..\Hardware\Delay;..\Hardware\usart;..\Hardware\I2C;..\Hardware\ADC;..\Hardware\PW
+                    -M;..\Hardware\EEPROM;..\Hardware\ADC11;..\Hardware\TIM) DEBUG OBJECTEXTEND PRINT(.\Listings\I2C.lst) TABS(2) OBJECT(.\Ob
+                    -jects\I2C.obj)
+
+line level    source
+
+   1          #include "intrins.h"
+   2          #include "I2C.h"
+   3          #include "GPIOConfig.h"
+   4          #include "usart2.h"
+   5          #include "Delay.h"
+   6          //I2C特殊寄存器访问需将P_SW2的bit7置1
+   7          u8 tmp[16];
+   8          bit INT_flag;   //RTC中断标志位
+   9          
+  10          void RTC_Isr() interrupt 0 using 2
+  11          { 
+  12   1      //    if(INT==0)
+  13   1      //    {     
+  14   1              INT_flag=1; 
+  15   1              IE2 = 0x00;   
+  16   1      //    } 
+  17   1      }  
+  18          
+  19          
+  20          void I2C_Delay(void)
+  21          {
+  22   1        _nop_();
+  23   1        _nop_();
+  24   1        _nop_();
+  25   1        _nop_();
+  26   1        _nop_();
+  27   1        _nop_();
+  28   1      
+  29   1      }
+  30          
+  31          
+  32          /****************************/
+  33          void I2C_Start(void)               //start the I2C, SDA High-to-low when SCL is high
+  34          {
+  35   1        SDA = 1;
+  36   1        I2C_Delay();
+  37   1        SCL = 1;
+  38   1        I2C_Delay();
+  39   1        SDA = 0;
+  40   1        I2C_Delay();
+  41   1        SCL = 0;
+  42   1        I2C_Delay();
+  43   1      }   
+  44          
+  45          
+  46          void I2C_Stop(void)         //STOP the I2C, SDA Low-to-high when SCL is high
+  47          {
+  48   1        SDA = 0;
+  49   1        I2C_Delay();
+  50   1        SCL = 1;
+  51   1        I2C_Delay();
+  52   1        SDA = 1;
+C51 COMPILER V9.60.0.0   I2C                                                               11/24/2022 15:43:11 PAGE 2   
+
+  53   1        I2C_Delay();
+  54   1      }
+  55          
+  56          void S_ACK(void)              //Send ACK (LOW)
+  57          {
+  58   1        SDA = 0;
+  59   1        I2C_Delay();
+  60   1        SCL = 1;
+  61   1        I2C_Delay();
+  62   1        SCL = 0;
+  63   1        I2C_Delay();
+  64   1      }
+  65          
+  66          void S_NoACK(void)           //Send No ACK (High)
+  67          {
+  68   1        SDA = 1;
+  69   1        I2C_Delay();
+  70   1        SCL = 1;
+  71   1        I2C_Delay();
+  72   1        SCL = 0;
+  73   1        I2C_Delay();
+  74   1      }
+  75              
+  76          void I2C_Check_ACK(void)         //Check ACK, If F0=0, then right, if F0=1, then error
+  77          {
+  78   1        SDA = 1;
+  79   1        I2C_Delay();
+  80   1        SCL = 1;
+  81   1        I2C_Delay();
+  82   1        F0  = SDA;
+  83   1        SCL = 0;
+  84   1        I2C_Delay();
+  85   1      }
+  86          
+  87          /****************************/
+  88          void I2C_WriteAbyte(u8 dat)   //write a byte to I2C
+  89          {
+  90   1        u8 i;
+  91   1        i = 8;
+  92   1        do
+  93   1        {
+  94   2          if(dat & 0x80)  SDA = 1;
+  95   2          else      SDA = 0;
+  96   2          dat <<= 1;
+  97   2          I2C_Delay();
+  98   2          SCL = 1;
+  99   2          I2C_Delay();
+ 100   2          SCL = 0;
+ 101   2          I2C_Delay();
+ 102   2        }
+ 103   1        while(--i);
+ 104   1      }
+ 105          
+ 106          /****************************/
+ 107          u8 I2C_ReadAbyte(void)      //read A byte from I2C
+ 108          {
+ 109   1        u8 i,dat;
+ 110   1        i = 8;
+ 111   1        SDA = 1;
+ 112   1        do
+ 113   1        {
+ 114   2          SCL = 1;
+C51 COMPILER V9.60.0.0   I2C                                                               11/24/2022 15:43:11 PAGE 3   
+
+ 115   2          I2C_Delay();
+ 116   2          dat <<= 1;
+ 117   2          if(SDA)   dat++;
+ 118   2          SCL  = 0;
+ 119   2          I2C_Delay();
+ 120   2        }
+ 121   1        while(--i);
+ 122   1        return(dat);
+ 123   1      }
+ 124          
+ 125          /****************************/
+ 126          void WriteNbyte(u8 addr, u8 *p, u8 number)      /*  WordAddress,First Data Address,Byte lenth */
+ 127                                                    //F0=0,right, F0=1,error
+ 128          {
+ 129   1        I2C_Start();
+ 130   1        I2C_WriteAbyte(SLAW);
+ 131   1        I2C_Check_ACK();
+ 132   1        if(!F0)
+ 133   1        {
+ 134   2          I2C_WriteAbyte(addr);
+ 135   2          I2C_Check_ACK();
+ 136   2          if(!F0)
+ 137   2          {
+ 138   3            do
+ 139   3            {
+ 140   4              I2C_WriteAbyte(*p);   p++;
+ 141   4              I2C_Check_ACK();
+ 142   4              if(F0)  break;
+ 143   4            }
+ 144   3            while(--number);
+ 145   3          }
+ 146   2        }
+ 147   1        I2C_Stop();
+ 148   1      }
+ 149          
+ 150          
+ 151          /****************************/
+ 152          void ReadNbyte(u8 addr, u8 *p, u8 number)   /*  WordAddress,First Data Address,Byte lenth */
+ 153          {
+ 154   1        I2C_Start();
+ 155   1        I2C_WriteAbyte(SLAW);
+ 156   1        I2C_Check_ACK();
+ 157   1        if(!F0)
+ 158   1        {
+ 159   2          I2C_WriteAbyte(addr);
+ 160   2          I2C_Check_ACK();
+ 161   2          if(!F0)
+ 162   2          {
+ 163   3            I2C_Start();
+ 164   3            I2C_WriteAbyte(SLAR);
+ 165   3            I2C_Check_ACK();
+ 166   3            if(!F0)
+ 167   3            {
+ 168   4              do
+ 169   4              {
+ 170   5                *p = I2C_ReadAbyte(); p++;
+ 171   5                if(number != 1)   S_ACK();  //send ACK
+ 172   5              }
+ 173   4              while(--number);
+ 174   4              S_NoACK();      //send no ACK
+ 175   4            }
+ 176   3          }
+C51 COMPILER V9.60.0.0   I2C                                                               11/24/2022 15:43:11 PAGE 4   
+
+ 177   2        }
+ 178   1        I2C_Stop();
+ 179   1      }
+ 180          
+ 181          
+ 182          
+ 183          void RTC_init()
+ 184          {
+ 185   1        tmp[0]=0x00;    //控制/状态寄存器1设置，正常模式，STOP=0，芯片时钟运行，加电复位失效功能禁止
+ 186   1        tmp[1]=0x02;    //控制/状态寄存器2设置，TI/TP=0，AIE=0，TIE=1
+ 187   1        tmp[2]=0x00;    //秒寄存器，设置为0，当前秒数0，可保证准确的时钟/日历数据
+ 188   1        tmp[3]=0x19;    //分寄存器，设置为0，当前分钟数0,
+ 189   1        tmp[4]=0x23;    //时寄存器，设置为0，当前小时数0
+ 190   1        tmp[5]=0x29;    //天寄存器，当前天数01
+ 191   1        tmp[6]=0x04;    //星期寄存器，设置为0，当前周日
+ 192   1        tmp[7]=0x07;    //月寄存器，设置为7，当前7月，21世纪
+ 193   1        tmp[8]=0x21;    //年寄存器，设置为21，当前年份21
+ 194   1        //tmp[9]=0x59;    //分报警寄存器，使能分钟报警，到下一个第59分钟报警  //0x01分报警     //0x80不报警
+ 195   1        tmp[9]=0x80;
+ 196   1        tmp[10]=0x80;   //时报警寄存器，禁止小时报警
+ 197   1        tmp[11]=0x80;   //天报警寄存器，禁止日期报警
+ 198   1        tmp[12]=0x80;   //周报警寄存器，禁止周报警
+ 199   1        tmp[13]=0x00;   //设置CLKOUT引脚为高阻
+ 200   1        //tmp[14]=0x82;   //设置定时器控制器寄存器TE=1,TD1=1,TD0=0(1Hz）
+ 201   1        //tmp[15]=0x3c;   //设置定时器到计数器数值为0x3c，即60s
+ 202   1        tmp[14]=0x03;   //设置定时器控制器寄存器TE=1,TD1=1,TD0=1(1/60Hz）
+ 203   1        tmp[15]=0x00;   //设置定时器到计数器数值为0xf0，即14400s
+ 204   1        WriteNbyte(0x00, tmp, 16);      //初始化pcf8563
+ 205   1        IP=0x01;
+ 206   1        IPH=0x01;       //RTC优先级为3级(最高级)
+ 207   1      }
+ 208          
+
+
+MODULE INFORMATION:   STATIC OVERLAYABLE
+   CODE SIZE        =    333    ----
+   CONSTANT SIZE    =   ----    ----
+   XDATA SIZE       =     16      10
+   PDATA SIZE       =   ----    ----
+   DATA SIZE        =   ----    ----
+   IDATA SIZE       =   ----    ----
+   BIT SIZE         =      1    ----
+END OF MODULE INFORMATION.
+
+
+C51 COMPILATION COMPLETE.  0 WARNING(S),  0 ERROR(S)
